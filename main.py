@@ -25,6 +25,7 @@ from face_detector import load_and_encode_face, encoding_to_hex
 from web_search import (
     search_google_lens,
     find_social_media_post,
+    find_best_social_media_post,
     compute_post_fingerprint,
 )
 from blockchain import (
@@ -117,8 +118,8 @@ def run_pipeline(image_path: str, search_type: str = "visual_matches"):
             print(f"  {i}. [{r['source']}] {r['title'][:50]}")
             print(f"     URL: {r['link']}")
 
-        # Try to find a social media post
-        social_post = find_social_media_post(search_results)
+        # Try to find a social media post (prefer official accounts)
+        social_post = find_best_social_media_post(search_results, api_key)
         if social_post:
             print(f"\n[WebSearch] Social media match found: {social_post['source']}")
             print(f"  URL: {social_post['link']}")

@@ -101,6 +101,120 @@ def find_social_media_post(results: list[dict]) -> Optional[dict]:
     return None
 
 
+def _extract_name_from_results(results: list[dict]) -> str:
+    """Try to extract a person's name from Google Lens results."""
+    for result in results:
+        title = result.get("title", "")
+        # Look for patterns like "Name | Source" or "Name - Source"
+        if " | " in title:
+            return title.split(" | ")[0].strip()
+        if " - " in title:
+            return title.split(" - ")[0].strip()
+        # If title looks like a name (2-4 words, title case)
+        words = title.split()
+        if 2 <= len(words) <= 4 and all(w[0].isupper() for w in words if w):
+            return title
+    return ""
+
+
+def search_official_account(
+    person_name: str,
+    api_key: str,
+    platform: str = "instagram",
+) -> Optional[dict]:
+    """
+    Search for the official/verified account of a person on a social media platform.
+
+    Args:
+        person_name: Name of the person to search for.
+        api_key: SerpApi API key.
+        platform: Social media platform to search (instagram, twitter, facebook).
+
+    Returns:
+        Dict with official account info, or None if not found.
+    """
+    if serpapi is None:
+        raise ImportError("serpapi package not installed. Run: pip install serpapi")
+
+    client = serpapi.Client(api_key=api_key)
+
+    # Search for official account
+    query = f"{person_name} official {platform} account"
+    print(f"[WebSearch] Searching for official account: {query}")
+
+    params = {
+        "engine": "google",
+        "q": query,
+        "num": 5,
+    }
+
+    results = client.search(params)
+    organic = results.get("organic_results", [])
+
+    for result in organic:
+        link = result.get("link", "")
+        title = result.get("title", "")
+        snippet = result.get("snippet", "")
+
+        # Check if this is a direct link to the platform
+        if platform in link.lower():
+            # Look for verification indicators
+            is_official = any(indicator in (title + " " + snippet).lower() for indicator in [
+                "official", "verified", "verified account",
+                "blue check", "authentic", "real account",
+            ])
+
+            return {
+                "title": title,
+                "link": link,
+                "source": platform.title(),
+                "thumbnail": "",
+                "image": "",
+                "is_official": is_official,
+                "snippet": snippet,
+            }
+
+    return None
+
+
+def find_best_social_media_post(
+    results: list[dict],
+    api_key: str,
+) -> Optional[dict]:
+    """
+    Find the best social media post from Google Lens results.
+    First checks for official accounts, then falls back to any social media match.
+
+    Args:
+        results: List of search results from search_google_lens().
+        api_key: SerpApi API key.
+
+    Returns:
+        Best social media result dict, or None if none found.
+    """
+    # First, try to find any social media post from lens results
+    social_post = find_social_media_post(results)
+
+    if not social_post:
+        return None
+
+    # Extract person name from results
+    person_name = _extract_name_from_results(results)
+
+    if person_name:
+        print(f"[WebSearch] Detected person name: {person_name}")
+
+        # Search for official account across all platforms in one query
+        official = search_official_account(person_name, api_key, "instagram")
+        if official:
+            print(f"[WebSearch] Found official account: {official['link']}")
+            if official.get("is_official"):
+                return official
+
+    # Fallback: return the first social media match from lens results
+    return social_post
+
+
 def compute_post_fingerprint(post: dict) -> str:
     """
     Compute a SHA-256 fingerprint of a discovered post for blockchain storage.
