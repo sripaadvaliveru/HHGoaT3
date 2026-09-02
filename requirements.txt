@@ -1,0 +1,7 @@
+deepface>=0.0.93
+tf-keras>=2.16.0
+serpapi>=1.0.0
+web3>=6.0.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+Pillow>=10.0.0
