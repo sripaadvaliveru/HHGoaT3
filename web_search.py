@@ -102,19 +102,75 @@ def find_social_media_post(results: list[dict]) -> Optional[dict]:
 
 
 def _extract_name_from_results(results: list[dict]) -> str:
-    """Try to extract a person's name from Google Lens results."""
+    """
+    Try to extract a person's name from Google Lens results.
+    Scans all results for name patterns, prioritizing social media profiles.
+    """
+    import re
+    from collections import Counter
+
+    # Collect all potential name fragments
+    name_candidates = []
+
+    # Words to strip from titles (video/content noise)
+    strip_words = {
+        "shorts", "reel", "reels", "video", "photo", "picture", "image",
+        "fan", "page", "official", "account", "profile", "channel",
+        "fc", "sticker", "status", "story", "post", "tweet",
+        "solar", "powered", "led", "string", "lights", "garden",
+        "delivery", "cannabis", "contact", "jobs", "careers",
+        "advice", "golden", "day", "chocolate", "trending",
+        "wholesome", "motivation", "inspiration", "money",
+        "marvel", "edit", "edits", "thor", "odison",
+        "india", "today", "court", "directed", "comedian",
+    }
+
     for result in results:
         title = result.get("title", "")
-        # Look for patterns like "Name | Source" or "Name - Source"
-        if " | " in title:
-            return title.split(" | ")[0].strip()
-        if " - " in title:
-            return title.split(" - ")[0].strip()
-        # If title looks like a name (2-4 words, title case)
+
+        # Clean separators
+        for sep in [" | ", " - ", " \u2013 ", " \u2014 ", " || ", " \u2022 "]:
+            if sep in title:
+                title = title.split(sep)[0].strip()
+
+        # Remove common suffixes
+        for suffix in [" FC", " Official", " Fan Club", " ID", " page",
+                        " - YouTube", " - Instagram", " - Facebook",
+                        " \ud83c\udf08"]:
+            if title.endswith(suffix):
+                title = title[:-len(suffix)].strip()
+
+        # Remove hashtags and @ mentions noise
+        title = re.sub(r'#\w+', '', title).strip()
+        title = re.sub(r'@\w+', '', title).strip()
+
+        # Remove emoji
+        title = re.sub(r'[\U0001f600-\U0001f64f\U0001f300-\U0001f5ff\U0001f680-\U0001f6ff\U0001f1e0-\U0001f1ff]+', '', title).strip()
+
         words = title.split()
-        if 2 <= len(words) <= 4 and all(w[0].isupper() for w in words if w):
-            return title
-    return ""
+        if not (2 <= len(words) <= 4):
+            continue
+
+        # Skip if mostly noise words
+        meaningful = [w for w in words if w.lower() not in strip_words and len(w) > 1]
+        if len(meaningful) < 2:
+            continue
+
+        # Skip if mostly not alphabetic
+        clean = " ".join(meaningful)
+        alpha_ratio = sum(c.isalpha() or c == ' ' for c in clean) / max(len(clean), 1)
+        if alpha_ratio < 0.8:
+            continue
+
+        name_candidates.append(clean)
+
+    if not name_candidates:
+        return ""
+
+    # Pick the most common candidate (appears in multiple results = likely the person's name)
+    counter = Counter(name_candidates)
+    best = counter.most_common(1)[0][0]
+    return best
 
 
 def search_official_account(
@@ -138,41 +194,54 @@ def search_official_account(
 
     client = serpapi.Client(api_key=api_key)
 
-    # Search for official account
-    query = f"{person_name} official {platform} account"
-    print(f"[WebSearch] Searching for official account: {query}")
+    # Search for official account - try multiple queries
+    queries = [
+        f"{person_name} {platform} official verified",
+        f"{person_name} official {platform}",
+        f"{person_name} {platform}",
+    ]
 
-    params = {
-        "engine": "google",
-        "q": query,
-        "num": 5,
-    }
+    for query in queries:
+        print(f"[WebSearch] Searching: {query}")
 
-    results = client.search(params)
-    organic = results.get("organic_results", [])
+        params = {
+            "engine": "google",
+            "q": query,
+            "num": 5,
+        }
 
-    for result in organic:
-        link = result.get("link", "")
-        title = result.get("title", "")
-        snippet = result.get("snippet", "")
+        results = client.search(params)
+        organic = results.get("organic_results", [])
 
-        # Check if this is a direct link to the platform
-        if platform in link.lower():
-            # Look for verification indicators
-            is_official = any(indicator in (title + " " + snippet).lower() for indicator in [
-                "official", "verified", "verified account",
-                "blue check", "authentic", "real account",
-            ])
+        for result in organic:
+            link = result.get("link", "")
+            title = result.get("title", "")
+            snippet = result.get("snippet", "")
 
-            return {
-                "title": title,
-                "link": link,
-                "source": platform.title(),
-                "thumbnail": "",
-                "image": "",
-                "is_official": is_official,
-                "snippet": snippet,
-            }
+            # Check if this is a direct link to the platform
+            if platform in link.lower():
+                # Look for verification indicators
+                combined_text = (title + " " + snippet).lower()
+                is_official = any(indicator in combined_text for indicator in [
+                    "official", "verified", "blue check", "authentic",
+                    "real account", "verified account", "follow",
+                ])
+
+                # Also check if title is just the person name (strong indicator)
+                name_words = person_name.lower().split()
+                title_lower = title.lower()
+                if all(w in title_lower for w in name_words):
+                    is_official = True
+
+                return {
+                    "title": title,
+                    "link": link,
+                    "source": platform.title(),
+                    "thumbnail": "",
+                    "image": "",
+                    "is_official": is_official,
+                    "snippet": snippet,
+                }
 
     return None
 
@@ -204,12 +273,13 @@ def find_best_social_media_post(
     if person_name:
         print(f"[WebSearch] Detected person name: {person_name}")
 
-        # Search for official account across all platforms in one query
-        official = search_official_account(person_name, api_key, "instagram")
-        if official:
-            print(f"[WebSearch] Found official account: {official['link']}")
-            if official.get("is_official"):
-                return official
+        # Search for official account across platforms
+        for platform in ["instagram", "twitter", "facebook"]:
+            official = search_official_account(person_name, api_key, platform)
+            if official:
+                print(f"[WebSearch] Found official {platform}: {official['link']}")
+                if official.get("is_official"):
+                    return official
 
     # Fallback: return the first social media match from lens results
     return social_post

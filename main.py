@@ -115,8 +115,10 @@ def run_pipeline(image_path: str, search_type: str = "visual_matches"):
     else:
         print(f"[WebSearch] Found {len(search_results)} visual matches:")
         for i, r in enumerate(search_results, 1):
-            print(f"  {i}. [{r['source']}] {r['title'][:50]}")
-            print(f"     URL: {r['link']}")
+            title_safe = r['title'][:50].encode('ascii', 'replace').decode('ascii')
+            link_safe = r['link'].encode('ascii', 'replace').decode('ascii')
+            print(f"  {i}. [{r['source']}] {title_safe}")
+            print(f"     URL: {link_safe}")
 
         # Try to find a social media post (prefer official accounts)
         social_post = find_best_social_media_post(search_results, api_key)
